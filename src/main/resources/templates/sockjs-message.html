@@ -1,0 +1,232 @@
+<!DOCTYPE HTML>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+<title>WebSocket With STOMP & SockJS Broadcast Example</title>
+<th:block th:include="fragments/common.html :: headerfiles"></th:block>
+</head>
+<body>
+	<div class="container">
+		<div class="py-5 text-center">
+			<a href="/"><h2>WebSocket</h2></a>
+			<p class="lead">WebSocket Chat - with STOMP & SockJS.</p>
+		</div>
+		<div class="row">
+			<div class="col-md-6">
+				<div class="mb-3">
+					<div class="input-group">
+						<input type="text" id="from" class="form-control"
+							placeholder="Choose a nickname" />
+						<div class="btn-group">
+							<button type="button" id="connect"
+								class="btn btn-sm btn-outline-secondary" onclick="connect()">Connect</button>
+							<button type="button" id="disconnect"
+								class="btn btn-sm btn-outline-secondary" onclick="disconnect()"
+								disabled>Disconnect</button>
+						</div>
+					</div>
+				</div>
+
+
+				<div class="mb-3">
+					<div class="input-group" id="sendmessage" style="display: none;">
+						<input type="text" id="message" class="form-control"
+							placeholder="Message">
+						<div class="input-group-append">
+							<button id="send" class="btn btn-primary" onclick="send()">Send</button>
+						</div>
+					</div>
+				</div>
+
+				<div class="mb-3">
+					<div class="input-group" id="toreceiver" style="display: none;">
+						<input type="text" id="receiver" class="form-control"
+							placeholder="Receiver">
+
+					</div>
+				</div>
+
+			</div>
+			<div class="col-md-6">
+				<div id="content"></div>
+				<div>
+					<span class="float-right">
+						<button id="clear" class="btn btn-primary"
+							onclick="clearMessages()" style="display: none;">Clear</button>
+					</span>
+				</div>
+				<div id="response"></div>
+			</div>
+		</div>
+	</div>
+
+	<footer th:insert="fragments/common.html :: footer"></footer>
+
+	<script th:src="@{/webjars/sockjs-client/1.1.2/sockjs.js}"
+		type="text/javascript"></script>
+	<script th:src="@{/webjars/stomp-websocket/2.3.3-1/stomp.js}"
+		type="text/javascript"></script>
+	<script type="text/javascript">
+		var stompClient = null;
+		var userName = $("#from").val();
+
+		function setConnected(connected) {
+			$("#from").prop("disabled", connected);
+			$("#connect").prop("disabled", connected);
+			$("#disconnect").prop("disabled", !connected);
+			if (connected) {
+				$("#users").show();
+				$("#sendmessage").show();
+				$("#toreceiver").show();
+			} else {
+				$("#users").hide();
+				$("#sendmessage").hide();
+				$("#toreceiver").hide();
+			}
+		}
+
+		function connect() {
+			userName = $("#from").val();
+			if (userName == null || userName === "") {
+				alert('Please input a nickname!');
+				return;
+			}
+
+			$.ajaxSetup({
+				headers : {
+					"Authorization" : "Basic " + btoa("user:user")
+				}
+			});
+
+			$
+					.post(
+							'/rest/user-connect',
+							{
+								username : userName,
+
+							},
+							function(data, status, xhr) {
+
+								var headers = {};
+								headers["username"] = userName;
+								headers["Authorization"] = "Basic "
+										+ btoa("user:user");
+								headers["login"] = "user";
+								headers["password"] = "user";
+								console.log(headers);
+
+								loadMessages(data);
+
+								var socket = new SockJS('/chat');
+								stompClient = Stomp.over(socket);
+
+								stompClient.connect(headers, function() {
+
+									stompClient.subscribe(
+											'/user/queue/messages', function(
+													output) {
+												showMessage(createTextNode(JSON
+														.parse(output.body)));
+											});
+
+									setConnected(true);
+								},
+
+								function(err) {
+									alert('error' + err);
+								});
+
+							}).done(function() {
+						// alert('Request done!'); 
+					}).fail(function(jqxhr, settings, ex) {
+						console.log('failed, ' + ex);
+					});
+		}
+
+		function disconnect() {
+			if (stompClient != null) {
+				$.post('/rest/user-disconnect', {
+					username : userName
+				}, function() {
+					sendConnection(' disconnected from server');
+
+					stompClient.disconnect(function() {
+						console.log('disconnected...');
+						setConnected(false);
+					});
+
+				}).done(function() {
+					// alert('Request done!'); 
+				}).fail(function(jqxhr, settings, ex) {
+					console.log('failed, ' + ex);
+				});
+			}
+		}
+
+		function send() {
+			var text = $("#message").val();
+
+			var receiver = $("#receiver").val();
+
+			if (receiver == null || receiver == "") {
+				alert('Please insert an user.');
+				return;
+			}
+			stompClient.send("/app/chat", {
+				'sender' : userName
+			}, JSON.stringify({
+				'from' : userName,
+				'text' : text,
+				'recipient' : receiver
+			}));
+			$("#message").val("");
+			$("#receiver").val("");
+		}
+
+		function loadMessages(data) {
+
+			for (var i = 0; i < data.length; i++) {
+
+				showMessage(createTextNode(data[i]))
+			}
+		}
+
+		function createTextNode(messageObj) {
+			var classAlert = 'alert-info';
+			var fromTo = messageObj.from;
+			var addTo = fromTo;
+
+			if (userName == messageObj.from) {
+				fromTo = messageObj.recipient;
+				addTo = 'to: ' + fromTo;
+			}
+
+			if (userName != messageObj.from && messageObj.from != "server") {
+				classAlert = "alert-warning";
+			}
+
+			if (messageObj.from != "server") {
+				addTo = '<a href="javascript:void(0)" onclick="setSelectedUser(\''
+						+ fromTo + '\')">' + addTo + '</a>'
+			}
+			return '<div class="row alert ' + classAlert + '"><div class="col-md-8">'
+					+ messageObj.text
+					+ '</div><div class="col-md-4 text-right"><small>[<b>'
+					+ addTo
+					+ '</b> '
+					+ messageObj.time
+					+ ']</small>'
+					+ '</div></div>';
+		}
+
+		function showMessage(message) {
+			$("#content").html($("#content").html() + message);
+			$("#clear").show();
+		}
+
+		function clearMessages() {
+			$("#content").html("");
+			$("#clear").hide();
+		}
+	</script>
+</body>
+</html>
